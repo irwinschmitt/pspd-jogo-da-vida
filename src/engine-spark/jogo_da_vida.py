@@ -1,6 +1,7 @@
-import sys
 import time
 import resource
+import json
+import socket
 from pyspark import SparkConf, SparkContext
 
 
@@ -12,7 +13,6 @@ def evoluir_uma_geracao(celulas_vivas_rdd):
     def gerar_atualizacoes_celula_e_vizinhos(celula):
         linha, coluna = celula
         yield (celula, (1, 0))
-
         for i in range(linha - 1, linha + 2):
             for j in range(coluna - 1, coluna + 2):
                 if (i, j) != celula:
@@ -23,101 +23,89 @@ def evoluir_uma_geracao(celulas_vivas_rdd):
 
     def aplicar_regras_jogo(celula_com_estado):
         celula, (esta_viva, qtd_vizinhos) = celula_com_estado
-
         if esta_viva and 2 <= qtd_vizinhos <= 3:
             return celula
-
         if not esta_viva and qtd_vizinhos == 3:
             return celula
-
         return None
 
     return estados_celulas.map(aplicar_regras_jogo).filter(lambda x: x is not None)
 
 
-def executar(sc, tam):
-    metrics = {
-        "init_time": 0.0,
-        "comp_time": 0.0,
-        "total_time": 0.0,
-        "peak_mem": 0,
-        "throughput": 0.0,
-    }
+def processar_tarefa(sc, pow_value):
+    tam = 1 << pow_value
+    num_geracoes = 2 * (tam - 3)
 
     start_time = time.time()
 
-    init_start = time.time()
     celulas_vivas = sc.parallelize([(1, 2), (2, 3), (3, 1), (3, 2), (3, 3)]).cache()
-    init_end = time.time()
-    metrics["init_time"] = init_end - init_start
+    init_time = time.time() - start_time
 
-    num_geracoes = 4 * (tam - 3)
     comp_start = time.time()
-
-    for i in range(num_geracoes):
-        novas_celulas_vivas = evoluir_uma_geracao(celulas_vivas)
-        novas_celulas_vivas.cache()
-
-        if i % 10 == 0:
-            qtd_celulas = novas_celulas_vivas.count()
-            if qtd_celulas == 0:
-                break
-
-        celulas_vivas.unpersist()
-        celulas_vivas = novas_celulas_vivas
-
-    comp_end = time.time()
-    metrics["comp_time"] = comp_end - comp_start
+    for _ in range(num_geracoes):
+        celulas_vivas = evoluir_uma_geracao(celulas_vivas).cache()
 
     estado_final = celulas_vivas.collect()
-    end_time = time.time()
+    comp_time = time.time() - comp_start
 
-    metrics["total_time"] = end_time - start_time
-    metrics["peak_mem"] = get_memory_usage()
-    metrics["throughput"] = (tam * tam * num_geracoes) / metrics["comp_time"] if metrics["comp_time"] > 0 else 0.0
+    total_time = time.time() - start_time
 
-    return estado_final, metrics
+    celulas_esperadas = {(tam - 2, tam - 1), (tam - 1, tam), (tam, tam - 2), (tam, tam - 1), (tam, tam)}
+    correto = len(estado_final) == 5 and set(estado_final) == celulas_esperadas
 
-
-def verificar(estado_final, tam):
-    celulas_esperadas = {
-        (tam - 2, tam - 1),
-        (tam - 1, tam),
-        (tam, tam - 2),
-        (tam, tam - 1),
-        (tam, tam),
+    return {
+        "engine": "SPARK",
+        "board_size": tam,
+        "metrics": {
+            "init_time": init_time,
+            "comp_time": comp_time,
+            "total_time": total_time,
+            "peak_mem_kb": get_memory_usage(),
+            "throughput": (tam * tam * num_geracoes) / comp_time if comp_time > 0 else 0,
+            "correct": correto,
+        },
     }
 
-    return len(estado_final) == 5 and set(estado_final) == celulas_esperadas
+
+def spark_engine(host, port):
+    conf = SparkConf().setAppName("JogoDaVidaEngine").set("spark.driver.memory", "2g")
+    sc = SparkContext(conf=conf)
+    sc.setLogLevel("ERROR")
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind((host, port))
+        s.listen()
+        print(f"[Spark Engine] Ouvindo em {host}:{port}")
+
+        while True:
+            conn, addr = s.accept()
+            with conn:
+                print(f"[SPARK] Conexão de {addr}")
+                data = conn.recv(1024).decode()
+                try:
+                    request = json.loads(data)
+                    pow_value = request.get("pow")
+                    print(f"[SPARK] Tarefa recebida: pow={pow_value}")
+
+                    if pow_value is not None:
+                        resultado = processar_tarefa(sc, pow_value)
+                        conn.sendall(json.dumps(resultado).encode())
+                        print("[SPARK] Resposta enviada.")
+                    else:
+                        conn.sendall(json.dumps({"error": "pow não especificado"}).encode())
+
+                except Exception as e:
+                    print(f"[SPARK] Erro: {e}")
+                    conn.sendall(json.dumps({"error": str(e)}).encode())
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print("Uso: spark-submit <script_name>.py <POWMIN> <POWMAX>", file=sys.stderr)
-        sys.exit(-1)
+    import sys
 
-    conf = SparkConf().setAppName("JogoDaVida").set("spark.driver.memory", "2g")
-    sc = SparkContext(conf=conf)
-    sc.setLogLevel("WARN")
+    if len(sys.argv) < 3:
+        print("Uso: spark-submit spark_engine.py <HOST> <PORTA>")
+        sys.exit(1)
 
-    pow_min = int(sys.argv[1])
-    pow_max = int(sys.argv[2])
-
-    for p in range(pow_min, pow_max + 1):
-        tam = 1 << p
-        print(f"\nSimulando tabuleiro {tam}x{tam}...")
-
-        estado_final, metrics = executar(sc, tam)
-        correto = verificar(estado_final, tam)
-
-        print("\n=== Métricas de desempenho Spark ===")
-        print(f"Tamanho do tabuleiro: {tam}x{tam}")
-        print(f"Tempo de inicialização: {metrics['init_time']:.6f} seg")
-        print(f"Tempo de computação: {metrics['comp_time']:.6f} seg")
-        print(f"Tempo total de execução: {metrics['total_time']:.6f} seg")
-        print(f"Pico de uso de memória: {metrics['peak_mem']} KB")
-        print(f"Vazão: {metrics['throughput']:.2f} células/seg")
-        print(f"Resultado: {'CORRETO' if correto else 'INCORRETO'}")
-        print("================================\n")
-
-    sc.stop()
+    host = sys.argv[1]
+    port = int(sys.argv[2])
+    spark_engine(host, port)
