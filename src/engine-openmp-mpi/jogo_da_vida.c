@@ -2,8 +2,22 @@
 #include <omp.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/resource.h>
+#include <sys/time.h>
 
 #define ind2d(i, j, width) (i) * (width + 2) + (j)
+
+double wall_time() {
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  return (tv.tv_sec + tv.tv_usec / 1000000.0);
+}
+
+long get_peak_memory_usage() {
+  struct rusage r_usage;
+  getrusage(RUSAGE_SELF, &r_usage);
+  return r_usage.ru_maxrss;
+}
 
 void InitTabul_Global(int *tabulIn, int tam) {
   for (int ij = 0; ij < (tam + 2) * (tam + 2); ij++) {
@@ -47,6 +61,11 @@ int run_game_of_life(int tam, int rank, int size) {
   int *tabulIn_local, *tabulOut_local;
   int local_rows;
   int is_correct = 0;
+  double init_time = 0, comp_time = 0, total_time = 0;
+  long peak_mem = 0;
+  double t0, t1, t2;
+
+  t0 = wall_time();
 
   if (rank == 0) {
     tabulIn_global = (int *)malloc((tam + 2) * (tam + 2) * sizeof(int));
@@ -74,6 +93,9 @@ int run_game_of_life(int tam, int rank, int size) {
 
   MPI_Scatterv(tabulIn_global, sendcounts, displs, MPI_INT, &tabulIn_local[ind2d(1, 0, tam)], local_rows * (tam + 2), MPI_INT, 0, MPI_COMM_WORLD);
 
+  t1 = wall_time();
+  init_time = t1 - t0;
+
   for (int i = 0; i < 2 * (tam - 3); i++) {
     int neighbor_up = (rank == 0) ? MPI_PROC_NULL : rank - 1;
     int neighbor_down = (rank == size - 1) ? MPI_PROC_NULL : rank + 1;
@@ -81,16 +103,34 @@ int run_game_of_life(int tam, int rank, int size) {
     MPI_Sendrecv(&tabulIn_local[ind2d(local_rows, 1, tam)], tam, MPI_INT, neighbor_down, 0, &tabulIn_local[ind2d(0, 1, tam)], tam, MPI_INT, neighbor_up, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
     MPI_Sendrecv(&tabulIn_local[ind2d(1, 1, tam)], tam, MPI_INT, neighbor_up, 1, &tabulIn_local[ind2d(local_rows + 1, 1, tam)], tam, MPI_INT, neighbor_down, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
     UmaVida_paralela(tabulIn_local, tabulOut_local, local_rows, tam);
-
     MPI_Sendrecv(&tabulOut_local[ind2d(local_rows, 1, tam)], tam, MPI_INT, neighbor_down, 0, &tabulOut_local[ind2d(0, 1, tam)], tam, MPI_INT, neighbor_up, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
     MPI_Sendrecv(&tabulOut_local[ind2d(1, 1, tam)], tam, MPI_INT, neighbor_up, 1, &tabulOut_local[ind2d(local_rows + 1, 1, tam)], tam, MPI_INT, neighbor_down, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
     UmaVida_paralela(tabulOut_local, tabulIn_local, local_rows, tam);
   }
 
+  t2 = wall_time();
+  comp_time = t2 - t1;
+  total_time = t2 - t0;
+  peak_mem = get_peak_memory_usage();
+
   MPI_Gatherv(&tabulIn_local[ind2d(1, 0, tam)], local_rows * (tam + 2), MPI_INT, tabulIn_global, sendcounts, displs, MPI_INT, 0, MPI_COMM_WORLD);
 
   if (rank == 0) {
     is_correct = Correto(tabulIn_global, tam);
+    double throughput = (double)(tam * tam * 2 * (tam - 3)) / comp_time;
+
+    printf("\n=== Métricas de desempenho MPI/OpenMP ===\n");
+    printf("Tamanho do tabuleiro: %dx%d\n", tam, tam);
+    printf("Processos MPI: %d\n", size);
+    printf("Threads OpenMP: %d\n", omp_get_max_threads());
+    printf("Tempo de inicialização: %.6f seg\n", init_time);
+    printf("Tempo de computação: %.6f seg\n", comp_time);
+    printf("Tempo total de execução: %.6f seg\n", total_time);
+    printf("Pico de uso de memória: %ld KB\n", peak_mem);
+    printf("Vazão: %.2f células/seg\n", throughput);
+    printf("Resultado: %s\n", is_correct ? "CORRETO" : "INCORRETO");
+    printf("====================================\n\n");
+
     free(tabulIn_global);
     free(sendcounts);
     free(displs);
@@ -133,13 +173,12 @@ int main(int argc, char *argv[]) {
 
   for (int p = pow_min; p <= pow_max; p++) {
     int current_tam = 1 << p;
-    int result = run_game_of_life(current_tam, rank, size);
 
     if (rank == 0) {
-      char *result_label = result ? "CORRETO" : "ERRADO";
-
-      printf("Tabuleiro: %dx%d | Resultado: %s\n", current_tam, current_tam, result_label);
+      printf("\nSimulando tabuleiro %dx%d...\n", current_tam, current_tam);
     }
+
+    int result = run_game_of_life(current_tam, rank, size);
     MPI_Barrier(MPI_COMM_WORLD);
   }
 

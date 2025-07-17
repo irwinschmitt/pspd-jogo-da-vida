@@ -1,5 +1,11 @@
 import sys
+import time
+import resource
 from pyspark import SparkConf, SparkContext
+
+
+def get_memory_usage():
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
 
 def evoluir_uma_geracao(celulas_vivas_rdd):
@@ -30,8 +36,23 @@ def evoluir_uma_geracao(celulas_vivas_rdd):
 
 
 def executar(sc, tam):
+    metrics = {
+        "init_time": 0.0,
+        "comp_time": 0.0,
+        "total_time": 0.0,
+        "peak_mem": 0,
+        "throughput": 0.0,
+    }
+
+    start_time = time.time()
+
+    init_start = time.time()
     celulas_vivas = sc.parallelize([(1, 2), (2, 3), (3, 1), (3, 2), (3, 3)]).cache()
+    init_end = time.time()
+    metrics["init_time"] = init_end - init_start
+
     num_geracoes = 4 * (tam - 3)
+    comp_start = time.time()
 
     for i in range(num_geracoes):
         novas_celulas_vivas = evoluir_uma_geracao(celulas_vivas)
@@ -45,7 +66,17 @@ def executar(sc, tam):
         celulas_vivas.unpersist()
         celulas_vivas = novas_celulas_vivas
 
-    return celulas_vivas.collect()
+    comp_end = time.time()
+    metrics["comp_time"] = comp_end - comp_start
+
+    estado_final = celulas_vivas.collect()
+    end_time = time.time()
+
+    metrics["total_time"] = end_time - start_time
+    metrics["peak_mem"] = get_memory_usage()
+    metrics["throughput"] = (tam * tam * num_geracoes) / metrics["comp_time"] if metrics["comp_time"] > 0 else 0.0
+
+    return estado_final, metrics
 
 
 def verificar(estado_final, tam):
@@ -74,12 +105,19 @@ if __name__ == "__main__":
 
     for p in range(pow_min, pow_max + 1):
         tam = 1 << p
-        print(f"Simulando tabuleiro {tam}x{tam}...")
+        print(f"\nSimulando tabuleiro {tam}x{tam}...")
 
-        estado_final = executar(sc, tam)
+        estado_final, metrics = executar(sc, tam)
         correto = verificar(estado_final, tam)
 
-        rotulo_resultado = "CORRETO" if correto else "ERRADO"
-        print(f"Tabuleiro: {tam}x{tam} | Resultado: {rotulo_resultado}\n")
+        print("\n=== Métricas de desempenho Spark ===")
+        print(f"Tamanho do tabuleiro: {tam}x{tam}")
+        print(f"Tempo de inicialização: {metrics['init_time']:.6f} seg")
+        print(f"Tempo de computação: {metrics['comp_time']:.6f} seg")
+        print(f"Tempo total de execução: {metrics['total_time']:.6f} seg")
+        print(f"Pico de uso de memória: {metrics['peak_mem']} KB")
+        print(f"Vazão: {metrics['throughput']:.2f} células/seg")
+        print(f"Resultado: {'CORRETO' if correto else 'INCORRETO'}")
+        print("================================\n")
 
     sc.stop()
