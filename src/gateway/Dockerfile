@@ -1,10 +1,7 @@
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY gateway_distribuido.py .
-COPY config.ini .
+COPY socket_server.py .
 
-EXPOSE 65432
-
-CMD ["python", "gateway_distribuido.py"]
+CMD ["python", "-u", "socket_server.py"]
