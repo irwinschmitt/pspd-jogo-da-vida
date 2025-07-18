@@ -1,12 +1,22 @@
+#include <arpa/inet.h>
+#include <jansson.h>
 #include <mpi.h>
+#include <netinet/in.h>
 #include <omp.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/resource.h>
+#include <sys/socket.h>
 #include <sys/time.h>
+#include <time.h>
 #include <unistd.h>
 
 #define ind2d(i, j, width) ((i) * ((width) + 2) + (j))
+#define PORT 8081
+#define BUFFER_SIZE 1024
+#define MIN_POW 3
+#define MAX_POW 20
 
 typedef struct {
   double init_time;
@@ -16,6 +26,14 @@ typedef struct {
   double throughput;
   int is_correct;
 } PerformanceMetrics;
+
+void log_message(const char *message) {
+  time_t now;
+  time(&now);
+  char *time_str = ctime(&now);
+  time_str[strlen(time_str) - 1] = '\0';
+  printf("[%s] %s\n", time_str, message);
+}
 
 double wall_time(void) {
   struct timeval tv;
@@ -68,6 +86,13 @@ int Correto(int *tabul, int tam) {
 }
 
 PerformanceMetrics run_game_of_life(int tam, int rank, int size) {
+  if (tam < (1 << MIN_POW)) {
+    if (rank == 0) {
+      fprintf(stderr, "Error: Grid size %d too small (minimum %d)\n", tam, 1 << MIN_POW);
+    }
+    MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+  }
+
   int *tabulIn_global = NULL;
   int *tabulIn_local = NULL;
   int *tabulOut_local = NULL;
@@ -79,8 +104,10 @@ PerformanceMetrics run_game_of_life(int tam, int rank, int size) {
 
   if (rank == 0) {
     tabulIn_global = malloc((tam + 2) * (tam + 2) * sizeof(int));
-    if (!tabulIn_global)
-      exit(EXIT_FAILURE);
+    if (!tabulIn_global) {
+      perror("malloc failed");
+      MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+    }
     InitTabul_Global(tabulIn_global, tam);
   }
 
@@ -88,18 +115,27 @@ PerformanceMetrics run_game_of_life(int tam, int rank, int size) {
   int remainder = tam % size;
   local_rows = rows_per_proc + (rank < remainder ? 1 : 0);
 
+  if (local_rows < 1) {
+    fprintf(stderr, "Rank %d: Not enough rows (tam=%d, size=%d)\n", rank, tam, size);
+    MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+  }
+
   tabulIn_local = calloc((local_rows + 2) * (tam + 2), sizeof(int));
   tabulOut_local = calloc((local_rows + 2) * (tam + 2), sizeof(int));
-  if (!tabulIn_local || !tabulOut_local)
-    exit(EXIT_FAILURE);
+  if (!tabulIn_local || !tabulOut_local) {
+    perror("calloc failed");
+    MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+  }
 
   int *sendcounts = NULL;
   int *displs = NULL;
   if (rank == 0) {
     sendcounts = malloc(size * sizeof(int));
     displs = malloc(size * sizeof(int));
-    if (!sendcounts || !displs)
-      exit(EXIT_FAILURE);
+    if (!sendcounts || !displs) {
+      perror("malloc failed");
+      MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+    }
     for (int i = 0; i < size; i++) {
       int rows = rows_per_proc + (i < remainder ? 1 : 0);
       sendcounts[i] = rows * (tam + 2);
@@ -139,7 +175,7 @@ PerformanceMetrics run_game_of_life(int tam, int rank, int size) {
 
   if (rank == 0) {
     metrics.is_correct = Correto(tabulIn_global, tam);
-    metrics.throughput = (double)(tam * tam * 2 * (tam - 3)) / metrics.comp_time;
+    metrics.throughput = (metrics.comp_time > 1e-9) ? (double)(tam * tam * 2 * (tam - 3)) / metrics.comp_time : 0.0;
     free(tabulIn_global);
     free(sendcounts);
     free(displs);
@@ -151,35 +187,135 @@ PerformanceMetrics run_game_of_life(int tam, int rank, int size) {
   return metrics;
 }
 
+void handle_client(int client_fd, int rank, int size) {
+  char buffer[BUFFER_SIZE] = {0};
+  int pow_val, tam;
+  PerformanceMetrics metrics;
+
+  int bytes_read = read(client_fd, buffer, BUFFER_SIZE - 1);
+  if (bytes_read <= 0) {
+    log_message("Error reading from client");
+    close(client_fd);
+    return;
+  }
+  buffer[bytes_read] = '\0';
+
+  json_error_t error;
+  json_t *root = json_loads(buffer, 0, &error);
+  if (!root || !json_is_object(root)) {
+    const char *error_msg = "Error: Invalid JSON";
+    write(client_fd, error_msg, strlen(error_msg));
+    log_message(error_msg);
+    if (root)
+      json_decref(root);
+    close(client_fd);
+    return;
+  }
+  json_t *pow_json = json_object_get(root, "pow");
+  if (!pow_json || !json_is_integer(pow_json)) {
+    const char *error_msg = "Error: JSON must contain integer 'pow'";
+    write(client_fd, error_msg, strlen(error_msg));
+    log_message(error_msg);
+    json_decref(root);
+    close(client_fd);
+    return;
+  }
+  pow_val = (int)json_integer_value(pow_json);
+  json_decref(root);
+
+  if (pow_val < MIN_POW || pow_val > MAX_POW) {
+    const char *error_msg = "Error: POW must be between 4 and 20";
+    write(client_fd, error_msg, strlen(error_msg));
+    log_message(error_msg);
+    close(client_fd);
+    return;
+  }
+
+  tam = 1 << pow_val;
+  log_message("Starting computation");
+  printf("Processing POW=%d (grid size=%d)\n", pow_val, tam);
+
+  MPI_Bcast(&tam, 1, MPI_INT, 0, MPI_COMM_WORLD);
+  metrics = run_game_of_life(tam, rank, size);
+
+  if (rank == 0) {
+    char json_output[BUFFER_SIZE];
+    snprintf(json_output, BUFFER_SIZE,
+             "{\"engine\":\"MPI/OpenMP\",\"board_size\":%d,\"metrics\":{"
+             "\"init_time\":%.6f,\"comp_time\":%.6f,\"total_time\":%.6f,"
+             "\"peak_mem_kb\":%ld,\"throughput\":%.2f,\"correct\":%s}}",
+             tam, metrics.init_time, metrics.comp_time, metrics.total_time, metrics.peak_mem, metrics.throughput, metrics.is_correct ? "true" : "false");
+
+    write(client_fd, json_output, strlen(json_output));
+    log_message("Computation completed");
+  }
+
+  close(client_fd);
+}
+
 int main(int argc, char **argv) {
   int rank, size;
   MPI_Init(&argc, &argv);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-  if (argc < 2) {
-    if (rank == 0) {
-      fprintf(stderr, "Uso: mpirun -np <num_procs> %s <POW>\n", argv[0]);
+  if (rank == 0) {
+    int server_fd;
+    struct sockaddr_in address;
+    int opt = 1;
+
+    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
+      perror("socket failed");
+      MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
     }
-    MPI_Finalize();
-    return EXIT_FAILURE;
-  }
 
-  int tam;
-  if (rank == 0) {
-    int current_pow = atoi(argv[1]);
-    tam = 1 << current_pow;
-  }
+    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))) {
+      perror("setsockopt");
+      MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+    }
 
-  MPI_Bcast(&tam, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = INADDR_ANY;
+    address.sin_port = htons(PORT);
 
-  PerformanceMetrics metrics = run_game_of_life(tam, rank, size);
+    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+      perror("bind failed");
+      MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+    }
 
-  if (rank == 0) {
-    printf("{\"engine\": \"MPI/OpenMP\", \"board_size\": %d, \"metrics\": {"
-           "\"init_time\": %f, \"comp_time\": %f, \"total_time\": %f, "
-           "\"peak_mem_kb\": %ld, \"throughput\": %f, \"correct\": %s}}\n",
-           tam, metrics.init_time, metrics.comp_time, metrics.total_time, metrics.peak_mem, metrics.throughput, metrics.is_correct ? "true" : "false");
+    if (listen(server_fd, 3) < 0) {
+      perror("listen");
+      MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+    }
+
+    log_message("Server started and listening for connections");
+
+    while (1) {
+      int client_fd;
+      struct sockaddr_in client_addr;
+      socklen_t client_len = sizeof(client_addr);
+
+      if ((client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_len)) < 0) {
+        perror("accept");
+        continue;
+      }
+
+      char client_ip[INET_ADDRSTRLEN];
+      inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);
+      printf("Connection accepted from %s:%d\n", client_ip, ntohs(client_addr.sin_port));
+
+      handle_client(client_fd, rank, size);
+    }
+
+    close(server_fd);
+  } else {
+    while (1) {
+      int tam;
+      MPI_Bcast(&tam, 1, MPI_INT, 0, MPI_COMM_WORLD);
+      if (tam == -1)
+        break;
+      PerformanceMetrics metrics = run_game_of_life(tam, rank, size);
+    }
   }
 
   MPI_Finalize();

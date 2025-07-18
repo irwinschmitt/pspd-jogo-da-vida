@@ -1,102 +1,120 @@
 import socket
+import socketserver
 import json
 import threading
-from queue import Queue
-import configparser
+import uuid
 
-config = configparser.ConfigParser()
-config.read("config.ini")
+ENGINE_ENDPOINTS = {
+    "MPI": ("localhost", 8081),
+    "SPARK": ("localhost", 8082),
+}
 
 
-class GameOfLifeServer:
-    def __init__(self):
-        self.host = config["network"]["server_host"]
-        self.port = int(config["network"]["server_port"])
-        self.task_queue = Queue()
-        self.results = {}
-        self.engine_ports = {
-            "MPI": int(config["network"]["mpi_engine_port"]),
-            "SPARK": int(config["network"]["spark_engine_port"]),
-        }
+class GatewayRequestHandler(socketserver.BaseRequestHandler):
+    def _dispatch_task_to_engine(self, engine_name, task_payload):
+        host, port = ENGINE_ENDPOINTS[engine_name]
+        print(
+            f"Thread {threading.get_ident()}: Dispatching to {engine_name} at {host}:{port}"
+        )
 
-    def handle_client(self, conn, addr):
-        print(f"Conexão estabelecida com {addr}")
         try:
-            data = conn.recv(1024).decode()
-            print(f"Dados recebidos do cliente: {data}")
-            request = json.loads(data)
-            print(f"Requisição recebida: {request}")
-
-            pow_min = request["pow_min"]
-            pow_max = request["pow_max"]
-            engines = ["MPI", "SPARK"]
-            results = []
-
-            for i, pow in enumerate(range(pow_min, pow_max + 1)):
-                engine = engines[i % 2]
-                task = {"pow": pow}
-                print(f"Distribuindo tarefa para engine: {engine} com pow: {pow}")
-                result = self.dispatch_task(engine, task)
-                if result is not None:
-                    results.append(result)
-                else:
-                    results.append(
-                        {"engine": engine, "pow": pow, "error": f"Sem resposta do engine {engine} para pow {pow}"}
-                    )
-
-            response = {"status": "processed", "results": results}
-            print(f"Resposta enviada ao cliente: {response}")
-            conn.sendall(json.dumps(response).encode())
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(300.0)
+                s.connect((host, port))
+                s.sendall((json.dumps(task_payload) + "\n").encode("utf-8"))
+                response_data = s.recv(8192)
+                if not response_data:
+                    return {"error": f"No response from {engine_name} engine."}
+                return json.loads(response_data.decode("utf-8"))
+        except ConnectionRefusedError:
+            print(
+                f"ERROR: Connection refused by {engine_name} engine at {host}:{port}."
+            )
+            return {
+                "error": f"Engine '{engine_name}' is offline or refusing connections."
+            }
+        except socket.timeout:
+            print(f"ERROR: Timeout waiting for {engine_name} engine.")
+            return {"error": f"Request to engine '{engine_name}' timed out."}
         except Exception as e:
-            print(f"Erro ao lidar com cliente {addr}: {e}")
-        finally:
-            print(f"Conexão encerrada com {addr}")
-            conn.close()
+            print(
+                f"ERROR: An unexpected error occurred with {engine_name} engine: {e}"
+            )
+            return {
+                "error": f"An unexpected error occurred while communicating with {engine_name}."
+            }
 
-    def dispatch_task(self, engine, task):
-        print(f"Enviando tarefa para {engine}: {task}")
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            try:
-                s.connect(("localhost", self.engine_ports[engine]))
-                print(f"Conectado ao engine {engine} na porta {self.engine_ports[engine]}")
-                s.sendall(json.dumps(task).encode())
-                print(f"Tarefa enviada para {engine}")
-                s.settimeout(5)
-                data = s.recv(4096)
-                if not data:
-                    print(f"Nenhuma resposta recebida do engine {engine}")
-                    return None
-                response = json.loads(data.decode())
-                print(f"Resposta recebida do engine {engine}: {response}")
-                response["engine"] = engine
-                response["pow"] = task["pow"]
-                return response
-            except ConnectionRefusedError:
-                print(f"Engine {engine} offline")
-                return None
-            except Exception as e:
-                print(f"Erro ao enviar tarefa para {engine}: {e}")
-                return None
+    def handle(self):
+        client_id = str(uuid.uuid4())
+        print(
+            f"Thread {threading.get_ident()}: Received connection from {self.client_address} (ClientID: {client_id})"
+        )
 
-    def start(self):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind((self.host, self.port))
-            s.listen()
-            print(f"Servidor ouvindo em {self.host}:{self.port}")
+        try:
+            data = self.request.recv(1024).strip()
+            request = json.loads(data.decode("utf-8"))
+
+            pow_min = int(request["pow_min"])
+            pow_max = int(request["pow_max"])
+
+            engines = ["MPI", "SPARK"]
+            results = [{} for _ in range(pow_max - pow_min + 1)]
             threads = []
-            try:
-                while True:
-                    conn, addr = s.accept()
-                    print(f"Cliente conectado: {addr}")
-                    t = threading.Thread(target=self.handle_client, args=(conn, addr), daemon=True)
-                    t.start()
-                    threads.append(t)
-            except KeyboardInterrupt:
-                print("\nEncerrando...")
-            finally:
-                s.close()
+
+            def dispatch_task(i, pow_val, engine_to_use):
+                task = {"pow": pow_val, "clientId": client_id}
+                result = self._dispatch_task_to_engine(engine_to_use, task)
+                results[i] = result
+
+            for i, pow_val in enumerate(range(pow_min, pow_max + 1)):
+                engine_to_use = engines[i % len(engines)]
+                t = threading.Thread(
+                    target=dispatch_task, args=(i, pow_val, engine_to_use)
+                )
+                threads.append(t)
+                t.start()
+
+            for t in threads:
+                t.join()
+
+            response_payload = json.dumps(
+                {
+                    "status": "processed",
+                    "clientId": client_id,
+                    "results": results,
+                }
+            )
+            self.request.sendall(response_payload.encode("utf-8"))
+
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            print(f"ERROR: Invalid request from {self.client_address}: {e}")
+            error_response = json.dumps(
+                {
+                    "status": "error",
+                    "message": "Invalid JSON request. Expected format: {'pow_min': X, 'pow_max': Y}",
+                }
+            )
+            self.request.sendall(error_response.encode("utf-8"))
+        except Exception as e:
+            print(f"ERROR: An unexpected error occurred in handle(): {e}")
+            error_response = json.dumps(
+                {
+                    "status": "error",
+                    "message": "An internal server error occurred.",
+                }
+            )
+            self.request.sendall(error_response.encode("utf-8"))
+        finally:
+            print(
+                f"Thread {threading.get_ident()}: Connection closed for {self.client_address}"
+            )
 
 
 if __name__ == "__main__":
-    server = GameOfLifeServer()
-    server.start()
+    HOST, PORT = "0.0.0.0", 8080
+    socketserver.ThreadingTCPServer.allow_reuse_address = True
+    server = socketserver.ThreadingTCPServer(
+        (HOST, PORT), GatewayRequestHandler
+    )
+    print(f"Gateway server started at {HOST}:{PORT}")
+    server.serve_forever()
