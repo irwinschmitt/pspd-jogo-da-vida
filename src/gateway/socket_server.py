@@ -5,8 +5,8 @@ import threading
 import uuid
 
 ENGINE_ENDPOINTS = {
-    "MPI": ("localhost", 8081),
-    "SPARK": ("localhost", 8082),
+    "MPI": ("mpi-engine-service", 8081),
+    "SPARK": ("spark-engine-service", 8082),
 }
 
 
