@@ -109,6 +109,7 @@ class GatewayRequestHandler(socketserver.BaseRequestHandler):
                 f"Thread {threading.get_ident()}: Connection closed for {self.client_address}"
             )
 
+
 def start_udp_server(host="0.0.0.0", port=8083):
     def udp_thread():
         udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -119,7 +120,8 @@ def start_udp_server(host="0.0.0.0", port=8083):
             try:
                 data, addr = udp_sock.recvfrom(1024)
                 try:
-                    handler = GatewayRequestHandler(request=udp_sock, client_address=addr, server=None)
+                    handler = GatewayRequestHandler(
+                        request=udp_sock, client_address=addr, server=None)
                     request = handler._parse_input(data)
                     pow_min = int(request["pow_min"])
                     pow_max = int(request["pow_max"])
@@ -150,7 +152,8 @@ def start_udp_server(host="0.0.0.0", port=8083):
                 print(f"[UDP] Erro: {e}")
 
     t = threading.Thread(target=udp_thread, daemon=True)
-    t.start()  
+    t.start()
+
 
 if __name__ == "__main__":
     HOST, PORT = "0.0.0.0", 8080

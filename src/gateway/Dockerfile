@@ -1,7 +1,5 @@
-FROM python:3.11-slim
-
+FROM python:3.9-slim
 WORKDIR /app
-
-COPY socket_server.py .
-
-CMD ["python", "-u", "socket_server.py"]
+RUN pip install kubernetes
+COPY main.py .
+CMD ["python", "main.py"]

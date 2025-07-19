@@ -194,7 +194,7 @@ void handle_client(int client_fd, int rank, int size) {
 
   int bytes_read = read(client_fd, buffer, BUFFER_SIZE - 1);
   if (bytes_read <= 0) {
-    log_message("Error reading from client");
+    log_message("Erro ao ler do cliente");
     close(client_fd);
     return;
   }
@@ -203,7 +203,7 @@ void handle_client(int client_fd, int rank, int size) {
   json_error_t error;
   json_t *root = json_loads(buffer, 0, &error);
   if (!root || !json_is_object(root)) {
-    const char *error_msg = "Error: Invalid JSON";
+    const char *error_msg = "Erro: JSON inválido";
     write(client_fd, error_msg, strlen(error_msg));
     log_message(error_msg);
     if (root)
@@ -213,7 +213,7 @@ void handle_client(int client_fd, int rank, int size) {
   }
   json_t *pow_json = json_object_get(root, "pow");
   if (!pow_json || !json_is_integer(pow_json)) {
-    const char *error_msg = "Error: JSON must contain integer 'pow'";
+    const char *error_msg = "Erro: JSON deve conter inteiro 'pow'";
     write(client_fd, error_msg, strlen(error_msg));
     log_message(error_msg);
     json_decref(root);
@@ -224,7 +224,7 @@ void handle_client(int client_fd, int rank, int size) {
   json_decref(root);
 
   if (pow_val < MIN_POW || pow_val > MAX_POW) {
-    const char *error_msg = "Error: POW must be between 4 and 20";
+    const char *error_msg = "Erro: POW deve estar entre 4 e 20";
     write(client_fd, error_msg, strlen(error_msg));
     log_message(error_msg);
     close(client_fd);
@@ -232,8 +232,8 @@ void handle_client(int client_fd, int rank, int size) {
   }
 
   tam = 1 << pow_val;
-  log_message("Starting computation");
-  printf("Processing POW=%d (grid size=%d)\n", pow_val, tam);
+  log_message("Iniciando computação");
+  printf("Processando POW=%d (tamanho da grade=%d)\n", pow_val, tam);
 
   MPI_Bcast(&tam, 1, MPI_INT, 0, MPI_COMM_WORLD);
   metrics = run_game_of_life(tam, rank, size);
@@ -248,7 +248,7 @@ void handle_client(int client_fd, int rank, int size) {
 
     write(client_fd, json_output, strlen(json_output));
     printf("%s\n", json_output);
-    log_message("Computation completed");
+    log_message("Computação finalizada");
   }
 
   close(client_fd);
@@ -266,12 +266,12 @@ int main(int argc, char **argv) {
     int opt = 1;
 
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
-      perror("socket failed");
+      perror("falha ao criar socket");
       MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
     }
 
-    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))) {
-      perror("setsockopt");
+    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
+      perror("falha ao configurar socket");
       MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
     }
 
@@ -280,16 +280,16 @@ int main(int argc, char **argv) {
     address.sin_port = htons(PORT);
 
     if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-      perror("bind failed");
+      perror("falha ao fazer bind");
       MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
     }
 
     if (listen(server_fd, 3) < 0) {
-      perror("listen");
+      perror("falha ao escutar");
       MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
     }
 
-    log_message("Server started and listening for connections");
+    log_message("Servidor iniciado e aguardando conexões");
 
     while (1) {
       int client_fd;
@@ -297,13 +297,13 @@ int main(int argc, char **argv) {
       socklen_t client_len = sizeof(client_addr);
 
       if ((client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_len)) < 0) {
-        perror("accept");
+        perror("falha ao aceitar conexão");
         continue;
       }
 
       char client_ip[INET_ADDRSTRLEN];
       inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);
-      printf("Connection accepted from %s:%d\n", client_ip, ntohs(client_addr.sin_port));
+      printf("Conexão aceita de %s:%d\n", client_ip, ntohs(client_addr.sin_port));
 
       handle_client(client_fd, rank, size);
     }

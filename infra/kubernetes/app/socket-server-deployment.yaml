@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: socket-server-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: socket-server
+  template:
+    metadata:
+      labels:
+        app: socket-server
+    spec:
+      serviceAccountName: default
+      containers:
+        - name: server
+          image: your-registry/socket-server:latest
+          ports:
+            - containerPort: 9999
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "128Mi"

@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-worker
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      component: spark-worker
+  template:
+    metadata:
+      labels:
+        component: spark-worker
+    spec:
+      containers:
+        - name: spark-worker
+          image: irwinschmitt/jogo-da-vida-engine-spark:latest
+          command: ["/opt/bitnami/spark/bin/spark-class"]
+          args:
+            [
+              "org.apache.spark.deploy.worker.Worker",
+              "spark://spark-master:7077",
+            ]
+          resources:
+            requests:
+              cpu: "2"
+              memory: "4Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
