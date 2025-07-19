@@ -133,7 +133,9 @@ def main(pow_val: int, sc: SparkContext):
         "board_size": tam,
         "metrics": metrics,
     }
-    return json.dumps(result_json, indent=4)
+    result_str = json.dumps(result_json, indent=4)
+    print(result_str)
+    return result_str
 
 
 def run_tcp_server():

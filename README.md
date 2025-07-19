@@ -20,9 +20,9 @@
 
 ## Pré-requisitos
 
-- Docker;
-- K3d;
-- Kubectl.
+- Docker: https://docs.docker.com/engine/install/
+- Kubectl: https://kubernetes.io/docs/tasks/tools/
+- K3d: https://k3d.io/stable/#learning
 
 ## Execução
 
@@ -35,7 +35,7 @@
 2. Aplique o manifesto do Kubernetes:
 
    ```bash
-   kubectl apply -f infra/kubernetes/
+   kubectl apply -f infra/kubernetes/app/
    ```
 
 3. Verifique se os pods estão em execução (`Running`):
@@ -63,3 +63,51 @@
 9. Aplica o manifesto do Kubernetes, ex.: `kubectl apply -f infra/kubernetes/`;
 10. Aguarda até que estejam com o status `Running` (`kubectl get pods`);
 11. Executa o cliente de testes: `python test_client.py --clients 1 --pow-min 4 --pow-max 5`.
+
+# ElasticSearch e Kibana
+
+1.  **Instale os Custom Resource Definitions (CRDs) do ECK**:
+
+    ```bash
+    kubectl create -f https://download.elastic.co/downloads/eck/3.0.0/crds.yaml
+    ```
+
+    Isso estende a API do Kubernetes para entender os recursos da Elastic.
+
+2.  **Instale o Operator do ECK**:
+
+    ```bash
+    kubectl apply -f https://download.elastic.co/downloads/eck/3.0.0/operator.yaml
+    ```
+
+    Isso implanta o controlador do ECK no namespace `elastic-system`.
+
+3.  **Verifique a instalação do Operator**:
+
+    ```bash
+    kubectl -n elastic-system get pods
+    ```
+
+    Aguarde até que `elastic-operator-0` esteja `Running`.
+
+4.  Aplique os manifestos:
+
+    ```bash
+    kubectl apply -f elasticsearch.yaml
+
+    kubectl apply -f kibana.yaml
+
+    kubectl apply -f filebeat-rbac.yaml
+
+    kubectl apply -f filebeat.yaml
+    ```
+
+5.  Execute o cliente de testes:
+
+    ```bash
+    python src/test-client/test_client.py --host 127.0.0.1 --port 30080 --clients 2 --pow-min 4 --pow-max 5
+    ```
+
+6. Visualize os logs no Kibana: `{"engine":"MPI/OpenMP","board_size":16,"metrics":{"init_time":0.000006,"comp_time":3.164810,"total_time":3.164816,"peak_mem_kb":10988,"throughput":2103.13,"correct":true}}`
+
+Obs.: apenas engine do openmp tá enviando agora.

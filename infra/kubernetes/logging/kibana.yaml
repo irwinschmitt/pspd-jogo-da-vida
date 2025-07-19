@@ -1,0 +1,41 @@
+apiVersion: kibana.k8s.elastic.co/v1
+kind: Kibana
+metadata:
+  name: quickstart-kb
+spec:
+  version: 8.14.1
+  count: 1
+  elasticsearchRef:
+    name: quickstart-es
+  http:
+    tls:
+      selfSignedCertificate:
+        disabled: true
+    service:
+      spec:
+        type: NodePort
+        ports:
+          - port: 5601
+            nodePort: 30100
+  config:
+    xpack.security.authc.providers:
+      anonymous.anonymous1:
+        order: 0
+        credentials: "elasticsearch_anonymous_user"
+    xpack.security.authc.selector.enabled: false
+  podTemplate:
+    spec:
+      containers:
+        - name: kibana
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 5601
+            initialDelaySeconds: 10
+          resources:
+            requests:
+              memory: 1Gi
+              cpu: 0.5
+            limits:
+              memory: 1Gi
+              cpu: 1

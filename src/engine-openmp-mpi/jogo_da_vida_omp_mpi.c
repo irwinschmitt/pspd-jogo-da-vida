@@ -247,6 +247,7 @@ void handle_client(int client_fd, int rank, int size) {
              tam, metrics.init_time, metrics.comp_time, metrics.total_time, metrics.peak_mem, metrics.throughput, metrics.is_correct ? "true" : "false");
 
     write(client_fd, json_output, strlen(json_output));
+    printf("%s\n", json_output);
     log_message("Computation completed");
   }
 

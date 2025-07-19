@@ -15,6 +15,7 @@ spec:
       containers:
         - name: mpi-engine
           image: irwinschmitt/jogo-da-vida-engine-mpi:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8081
 ---

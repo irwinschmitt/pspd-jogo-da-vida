@@ -15,6 +15,7 @@ spec:
       containers:
         - name: spark-engine
           image: irwinschmitt/jogo-da-vida-engine-spark:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8082
 ---

@@ -1,0 +1,43 @@
+apiVersion: elasticsearch.k8s.elastic.co/v1
+kind: Elasticsearch
+metadata:
+  name: quickstart-es
+spec:
+  version: 8.14.1
+  http:
+    tls:
+      selfSignedCertificate:
+        disabled: true
+  nodeSets:
+    - name: default
+      count: 1
+      config:
+        xpack.security.authc:
+          anonymous:
+            username: anonymous_user
+            roles: superuser, kibana_admin
+            authz_exception: false
+      podTemplate:
+        spec:
+          containers:
+            - name: elasticsearch
+              env:
+                - name: READINESS_PROBE_PROTOCOL
+                  value: "http"
+              resources:
+                requests:
+                  memory: 2Gi
+                  cpu: 0.5
+                limits:
+                  memory: 2Gi
+                  cpu: 1
+      volumeClaimTemplates:
+        - metadata:
+            name: elasticsearch-data
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 5Gi
+            storageClassName: local-path
