@@ -109,10 +109,55 @@ class GatewayRequestHandler(socketserver.BaseRequestHandler):
                 f"Thread {threading.get_ident()}: Connection closed for {self.client_address}"
             )
 
+def start_udp_server(host="0.0.0.0", port=8083):
+    def udp_thread():
+        udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        udp_sock.bind((host, port))
+        print(f"[UDP] Servidor UDP ativo em {host}:{port}")
+
+        while True:
+            try:
+                data, addr = udp_sock.recvfrom(1024)
+                try:
+                    handler = GatewayRequestHandler(request=udp_sock, client_address=addr, server=None)
+                    request = handler._parse_input(data)
+                    pow_min = int(request["pow_min"])
+                    pow_max = int(request["pow_max"])
+                    engines = ["MPI", "SPARK"]
+                    results = []
+
+                    for i, pow_val in enumerate(range(pow_min, pow_max + 1)):
+                        engine = engines[i % len(engines)]
+                        task = {"pow": pow_val, "clientId": str(uuid.uuid4())}
+                        result = handler._dispatch_task_to_engine(engine, task)
+                        results.append(result)
+
+                    response = json.dumps({
+                        "status": "processed",
+                        "via": "udp",
+                        "results": results
+                    }).encode("utf-8")
+
+                except Exception as e:
+                    response = json.dumps({
+                        "status": "error",
+                        "message": str(e)
+                    }).encode("utf-8")
+
+                udp_sock.sendto(response, addr)
+
+            except Exception as e:
+                print(f"[UDP] Erro: {e}")
+
+    t = threading.Thread(target=udp_thread, daemon=True)
+    t.start()  
 
 if __name__ == "__main__":
     HOST, PORT = "0.0.0.0", 8080
     socketserver.ThreadingTCPServer.allow_reuse_address = True
+
+    start_udp_server()
+
     server = socketserver.ThreadingTCPServer(
         (HOST, PORT), GatewayRequestHandler
     )
