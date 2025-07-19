@@ -9,6 +9,9 @@ spec:
     output.elasticsearch:
       hosts: ["http://quickstart-es-es-http:9200"]
       ssl.enabled: false
+      # Remova o pipeline, pois ele não será mais necessário
+      # pipeline: parse_json_message
+
     filebeat.autodiscover:
       providers:
         - type: kubernetes
@@ -22,17 +25,13 @@ spec:
                     kubernetes.labels.app: "spark-engine"
                 - equals:
                     kubernetes.labels.app: "mpi-engine"
-              processors:
-                - decode_json_fields:
-                    fields: ["message"]
-                    target: ""
-                    overwrite_keys: false
-                    add_error: true
-                    max_depth: 1
               config:
                 - type: container
                   paths:
                     - /var/log/containers/*${data.kubernetes.container.id}.log
+                  json.keys_under_root: true
+                  json.add_error_key: true
+
   daemonSet:
     podTemplate:
       spec:
@@ -81,3 +80,4 @@ spec:
           - name: varlibcontainerd
             hostPath:
               path: /var/lib/containerd
+
