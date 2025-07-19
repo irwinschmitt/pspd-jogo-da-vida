@@ -9,10 +9,10 @@ RUN apt-get update && \
 
 ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 
-RUN pip install --no-cache-dir pyspark numpy elasticsearch
+RUN pip install --no-cache-dir pyspark numpy
 
 WORKDIR /app
 
 COPY jogo_da_vida_spark.py .
 
-CMD ["python", "jogo_da_vida_spark.py"]
+CMD ["python", "-u", "jogo_da_vida_spark.py"]

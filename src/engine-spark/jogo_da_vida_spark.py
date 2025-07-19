@@ -133,7 +133,7 @@ def main(pow_val: int, sc: SparkContext):
         "board_size": tam,
         "metrics": metrics,
     }
-    result_str = json.dumps(result_json, indent=4)
+    result_str = json.dumps(result_json)
     print(result_str)
     return result_str
 
@@ -149,6 +149,7 @@ def run_tcp_server():
         .getOrCreate()
     )
     sc = spark.sparkContext
+
     logging.info(f"TCP Server listening on {HOST}:{PORT}")
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
