@@ -29,7 +29,7 @@ def create_job_object(engine: str, tam: int, batch_id: str) -> client.V1Job:
         image = SPARK_IMAGE
         command = ["/opt/bitnami/spark/bin/spark-submit"]
         args = [
-            "--master", "spark://spark-master:7077",
+            "--master", "spark://engine-spark-master:7077",
             "--class", "org.apache.spark.deploy.SparkSubmit",
             "--conf", "spark.executor.memory=2G",
             "--conf", "spark.executor.cores=1",

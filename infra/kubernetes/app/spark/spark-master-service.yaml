@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: spark-master
+  name: engine-spark-master
 spec:
   ports:
     - name: spark-connect
@@ -11,4 +11,4 @@ spec:
       port: 8080
       targetPort: 8080
   selector:
-    component: spark-master
+    component: engine-spark-master

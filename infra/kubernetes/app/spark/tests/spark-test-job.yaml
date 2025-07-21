@@ -1,26 +1,27 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: spark-job-test-tam-8
+  name: spark-job-test-tam-4
 spec:
   template:
     spec:
       containers:
         - name: spark-gameoflife-job
           image: irwinschmitt/jogo-da-vida-engine-spark:latest
-          securityContext:
-            runAsUser: 0
           env:
+            - name: HOME
+              value: "/tmp"
             - name: POD_IP
               valueFrom:
                 fieldRef:
                   fieldPath: status.podIP
-          command: ["/opt/bitnami/spark/bin/spark-submit"]
           args:
+            - "/opt/bitnami/spark/bin/spark-submit"
             - "--master"
-            - "spark://spark-master:7077"
+            - "spark://engine-spark-master:7077"
             - "--conf"
             - "spark.driver.host=$(POD_IP)"
             - "/app/main.py"
             - "4"
       restartPolicy: Never
+  backoffLimit: 4
