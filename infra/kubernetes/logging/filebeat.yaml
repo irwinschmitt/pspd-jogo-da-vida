@@ -1,17 +1,13 @@
 apiVersion: beat.k8s.elastic.co/v1beta1
 kind: Beat
 metadata:
-  name: quickstart-filebeat
+  name: logging-filebeat
 spec:
   type: filebeat
   version: 8.14.1
+  elasticsearchRef:
+    name: logging-elasticsearch
   config:
-    output.elasticsearch:
-      hosts: ["http://quickstart-es-es-http:9200"]
-      ssl.enabled: false
-      # Remova o pipeline, pois ele não será mais necessário
-      # pipeline: parse_json_message
-
     filebeat.autodiscover:
       providers:
         - type: kubernetes
@@ -29,9 +25,14 @@ spec:
                 - type: container
                   paths:
                     - /var/log/containers/*${data.kubernetes.container.id}.log
-                  json.keys_under_root: true
-                  json.add_error_key: true
-
+                  parsers:
+                    - cri:
+                        enabled: true
+                  processors:
+                    - decode_json_fields:
+                        fields: ["message"]
+                        target: ""
+                        overwrite_keys: true
   daemonSet:
     podTemplate:
       spec:
@@ -80,4 +81,3 @@ spec:
           - name: varlibcontainerd
             hostPath:
               path: /var/lib/containerd
-

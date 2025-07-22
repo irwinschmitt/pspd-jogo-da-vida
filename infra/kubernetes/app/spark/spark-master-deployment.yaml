@@ -11,6 +11,7 @@ spec:
     metadata:
       labels:
         component: engine-spark-master
+        app: spark-engine
     spec:
       containers:
         - name: engine-spark-master

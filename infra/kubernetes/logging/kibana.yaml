@@ -1,12 +1,12 @@
 apiVersion: kibana.k8s.elastic.co/v1
 kind: Kibana
 metadata:
-  name: quickstart-kb
+  name: logging-kibana
 spec:
   version: 8.14.1
   count: 1
   elasticsearchRef:
-    name: quickstart-es
+    name: logging-elasticsearch
   http:
     tls:
       selfSignedCertificate:

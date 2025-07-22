@@ -1,9 +1,14 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: spark-job-test-tam-4
+  name: spark-job-test
+  labels:
+    app: spark-engine
 spec:
   template:
+    metadata:
+      labels:
+        app: spark-engine
     spec:
       containers:
         - name: spark-gameoflife-job
@@ -22,6 +27,6 @@ spec:
             - "--conf"
             - "spark.driver.host=$(POD_IP)"
             - "/app/main.py"
-            - "4"
+            - "5"
       restartPolicy: Never
   backoffLimit: 4
